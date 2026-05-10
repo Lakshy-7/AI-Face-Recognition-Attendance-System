@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────────────────────
+#  AI Face Recognition Attendance System
+#  Gradio — Hugging Face Spaces
+#
+#  Install locally:
+#    pip install cmake        # must come first — dlib needs it
+#    pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────
+
+# Gradio web framework (Spaces uses this natively)
+gradio>=4.19.0
+
+# Face detection & recognition via deep learning
+# Note: dlib is a heavy C++ build — Spaces handles it automatically
+dlib>=19.24.0
+face_recognition>=1.3.0
+
+# Computer vision — image decoding, drawing boxes & text
+opencv-python-headless>=4.9.0.80
+
+# Image handling (PIL for Gradio image I/O)
+Pillow>=10.2.0
+
+# Numerical operations (distance comparisons between encodings)
+numpy>=1.26.0
+
+# Attendance data & CSV export
+pandas>=2.2.0
