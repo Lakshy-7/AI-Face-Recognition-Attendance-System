@@ -2,7 +2,7 @@
 ╔══════════════════════════════════════════════════════════════╗
 ║   AI Face Recognition Attendance System — Gradio App         ║
 ║   Deployment: Hugging Face Spaces                            ║
-║   Stack: Gradio · face_recognition · OpenCV · Pandas · SQLite ║
+║   Stack: Gradio · OpenCV · Pandas · SQLite · Plotly · FPDF   ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Professional attendance system with student registration, face recognition,
@@ -12,7 +12,6 @@ DEBUG MODE: All operations log to terminal for troubleshooting.
 """
 
 import gradio as gr
-import face_recognition
 import cv2
 import numpy as np
 import pandas as pd
@@ -48,10 +47,14 @@ CSV_PATH = BASE_DIR / "attendance.csv"
 PDF_PATH = BASE_DIR / "attendance_report.pdf"
 
 TOLERANCE = 0.50
-MAX_PROCESS_WIDTH = 480
+MAX_PROCESS_WIDTH = 320
 ENCODING_CACHE_INTERVAL = 5
 DATE_FORMAT = "%Y-%m-%d"
 TIME_FORMAT = "%H:%M:%S"
+
+# OpenCV face detection and recognition setup
+FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+LBPH_RECOGNIZER = cv2.face.LBPHFaceRecognizer_create()
 
 os.makedirs(KNOWN_DIR, exist_ok=True)
 
@@ -160,7 +163,7 @@ def cache_student_encodings(force_reload=False):
     """Load and cache student face encodings from database."""
     try:
         current_time = time.time()
-        
+
         if not force_reload and _encoding_cache["encodings"] is not None:
             if current_time - _encoding_cache["timestamp"] < ENCODING_CACHE_INTERVAL:
                 log_debug(f"Using cached encodings ({len(_encoding_cache['encodings'])} students)")
@@ -175,15 +178,24 @@ def cache_student_encodings(force_reload=False):
         encodings = []
         student_ids = []
         names = []
+        faces = []
+        labels = []
+
         for row in rows:
             try:
                 enc = pickle.loads(row["encoding"])
                 encodings.append(enc)
                 student_ids.append(row["id"])
                 names.append(row["name"])
+                faces.append(enc)
+                labels.append(len(labels))  # Sequential labels for LBPH
             except Exception as e:
                 log_debug(f"Failed to load encoding for student {row['name']}: {str(e)}", "WARNING")
                 continue
+
+        # Train LBPH recognizer with all faces
+        if faces:
+            LBPH_RECOGNIZER.train(faces, np.array(labels))
 
         _encoding_cache.update({
             "encodings": encodings,
@@ -226,17 +238,24 @@ def pil_to_rgb(pil_img):
 
 
 def encode_face(image_rgb):
-    """Extract and encode first face from RGB image."""
+    """Extract and encode first face from RGB image using OpenCV."""
     try:
-        face_locations = face_recognition.face_locations(image_rgb, model="hog")
-        if not face_locations:
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        faces = FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+        if len(faces) == 0:
             log_debug("No faces detected in image.", "WARNING")
             return None
-        face_encodings = face_recognition.face_encodings(image_rgb, face_locations)
-        if face_encodings:
-            log_debug(f"Successfully encoded face.", "SUCCESS")
-            return face_encodings[0]
-        return None
+
+        # Use the first detected face
+        (x, y, w, h) = faces[0]
+        face_roi = gray[y:y+h, x:x+w]
+
+        # Resize face to standard size for LBPH
+        face_roi = cv2.resize(face_roi, (100, 100))
+
+        log_debug(f"Successfully encoded face.", "SUCCESS")
+        return face_roi
     except Exception as e:
         log_exception(e, "encode_face")
         return None
@@ -456,7 +475,7 @@ def reset_filters():
 # ──────────────────────────────────────────────────────────────
 
 def recognize_attendance(pil_img):
-    """Recognize faces in image and mark attendance."""
+    """Recognize faces in image and mark attendance using OpenCV."""
     try:
         if pil_img is None:
             msg = "⚠️ Upload an attendance image first."
@@ -465,7 +484,7 @@ def recognize_attendance(pil_img):
 
         log_debug("Starting face recognition...")
         known_encodings, student_ids, names = cache_student_encodings()
-        
+
         if not known_encodings:
             msg = "⚠️ No registered students. Register first."
             log_debug(msg, "WARNING")
@@ -477,26 +496,28 @@ def recognize_attendance(pil_img):
             msg = "❌ Failed to process image."
             log_debug(msg, "ERROR")
             return pil_img, msg, load_attendance_frame()
-        
-        face_locations = face_recognition.face_locations(image_rgb, model="hog")
-        face_encodings = face_recognition.face_encodings(image_rgb, face_locations)
-        
-        if not face_locations:
+
+        # Convert to grayscale for face detection
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        faces = FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+
+        if len(faces) == 0:
             msg = "❌ No faces detected."
             log_debug(msg, "WARNING")
             return pil_img, msg, load_attendance_frame()
 
-        log_debug(f"Detected {len(face_locations)} face(s).")
-        
+        log_debug(f"Detected {len(faces)} face(s).")
+
         original_image = pil_to_rgb(pil_img)
-        original_locations = [
-            (
-                int(top / scale),
-                int(right / scale),
-                int(bottom / scale),
-                int(left / scale),
-            ) for (top, right, bottom, left) in face_locations
-        ]
+        # Convert OpenCV face locations to expected format (top, right, bottom, left)
+        original_locations = []
+        for (x, y, w, h) in faces:
+            original_locations.append((
+                int(y / scale),  # top
+                int((x + w) / scale),  # right
+                int((y + h) / scale),  # bottom
+                int(x / scale)  # left
+            ))
 
         face_names = []
         face_confidences = []
@@ -504,33 +525,39 @@ def recognize_attendance(pil_img):
         unknown_count = 0
         date_str = datetime.now().strftime(DATE_FORMAT)
 
-        for face_enc in face_encodings:
-            distances = face_recognition.face_distance(known_encodings, face_enc)
-            best_idx = int(np.argmin(distances))
-            best_dist = float(distances[best_idx])
+        for (x, y, w, h) in faces:
+            face_roi = gray[y:y+h, x:x+w]
+            face_roi = cv2.resize(face_roi, (100, 100))
+
+            # Predict using LBPH recognizer
+            label, confidence = LBPH_RECOGNIZER.predict(face_roi)
+
+            # LBPH confidence is distance, lower is better
+            # Convert to similarity percentage (inverse of distance)
+            confidence_pct = max(0, min(100, 100 - confidence))
+
             match_name = "Unknown"
-            confidence = 0.0
             student_id = None
 
-            if best_dist <= TOLERANCE:
-                match_name = names[best_idx]
-                student_id = student_ids[best_idx]
-                confidence = round((1 - best_dist) * 100, 1)
+            if confidence_pct >= 60:  # Threshold for recognition
+                if label < len(names):
+                    match_name = names[label]
+                    student_id = student_ids[label]
 
             face_names.append(match_name)
-            face_confidences.append(confidence)
+            face_confidences.append(confidence_pct)
 
             if match_name == "Unknown":
                 unknown_count += 1
                 summary_lines.append("❓ Unknown face detected")
-                log_debug(f"Unknown face (distance: {best_dist:.3f})")
+                log_debug(f"Unknown face (confidence: {confidence_pct:.1f}%)")
             else:
                 if attendance_exists(student_id, date_str):
-                    summary_lines.append(f"✅ {match_name} already marked today ({confidence}% match)")
+                    summary_lines.append(f"✅ {match_name} already marked today ({confidence_pct:.1f}% match)")
                     log_debug(f"{match_name} already marked today.")
                 else:
-                    save_attendance_record(student_id, match_name, confidence)
-                    summary_lines.append(f"✅ {match_name} marked present ({confidence}% match)")
+                    save_attendance_record(student_id, match_name, confidence_pct)
+                    summary_lines.append(f"✅ {match_name} marked present ({confidence_pct:.1f}% match)")
 
         annotated = draw_faces(original_image, original_locations, face_names, face_confidence=face_confidences)
         annotated_pil = Image.fromarray(annotated)
@@ -1051,7 +1078,7 @@ def build_app():
             gr.HTML(
                 """
                 <div style='text-align:center; margin-top:20px; color:#94a3b8; font-size:0.82rem;'>
-                    Built with Gradio · face_recognition · OpenCV · SQLite · Plotly · Pandas
+                    Built with Gradio · OpenCV · SQLite · Plotly · Pandas · FPDF
                 </div>
                 """
             )
