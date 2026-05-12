@@ -3,7 +3,6 @@
 #  Gradio — Hugging Face Spaces
 #
 #  Lightweight OpenCV-based face recognition for CPU Basic compatibility.
-#  No dlib compilation required.
 # ─────────────────────────────────────────────────────────────
 
 # Gradio web framework
