@@ -91,7 +91,7 @@ def log_exception(exc, context=""):
     print(f"{'='*60}\n")
 
 
-def find_available_port(start_port=7865, max_port=7899):
+def find_available_port(start_port=7860, max_port=7899):
     """Find the first available port in a range."""
     for port in range(start_port, max_port + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -1102,21 +1102,16 @@ log_debug("=" * 60)
 demo, theme, css = build_app()
 
 if __name__ == "__main__":
-    # Hugging Face Spaces exposes the port via PORT; fall back to GRADIO_SERVER_PORT or 7865 for local runs.
-    port_env = os.environ.get("PORT") or os.environ.get("GRADIO_SERVER_PORT")
-    base_port = int(port_env) if port_env and port_env.isdigit() else 7865
-    port = base_port
+    # Hugging Face Spaces exposes the port via PORT; fall back to 7860 for local runs.
+    port = int(os.environ.get("PORT", 7860))
 
     if "PORT" not in os.environ:
         try:
-            port = find_available_port(base_port, base_port + 20)
+            port = find_available_port(port, port + 20)
         except Exception as e:
             log_exception(e, "find_available_port")
-            port = base_port
 
     log_debug(f"Launching Gradio app on port {port}...")
-    if port != base_port:
-        log_debug(f"Port {base_port} was busy. Using port {port} instead.", "WARNING")
 
     demo.launch(
         server_name="0.0.0.0",
