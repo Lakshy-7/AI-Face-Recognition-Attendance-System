@@ -1,23 +1,8 @@
-# ─────────────────────────────────────────────────────────────
-#  AI Face Recognition Attendance System
-#  Gradio — Hugging Face Spaces
-#
-#  Lightweight OpenCV-based face recognition for CPU Basic compatibility.
-# ─────────────────────────────────────────────────────────────
-
-# Gradio web framework
-gradio==4.19.0
-
-# Computer vision — face detection and recognition
+gradio==6.14.0
 opencv-contrib-python-headless==4.9.0.80
-
-# Image handling (PIL for Gradio image I/O)
-Pillow==10.2.0
-
-# Numerical operations (distance comparisons between encodings)
-numpy==1.26.0
-
-# Attendance data & CSV export
-pandas==2.2.0
-plotly==5.20.0
-fpdf2==2.7.0
+opencv-python-headless>=4.9.0.80
+Pillow>=11.0.0
+numpy==1.26.4
+pandas>=2.2.0
+plotly>=5.20.0
+fpdf2>=2.7.0
